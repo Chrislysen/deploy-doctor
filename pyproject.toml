@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deploy-doctor"
+version = "0.1.0"
+description = "Catch silent ML deployment footguns — does your 'GPU' quantized model actually run on GPU?"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Christian Lysenstøen" }]
+keywords = [
+    "pytorch", "quantization", "deployment", "mlops",
+    "inference", "gpu", "int8", "device-placement",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Intended Audience :: Developers",
+]
+dependencies = ["torch>=1.13"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+deploy-doctor = "deploy_doctor.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Chrislysen/deploy-doctor"
+Issues = "https://github.com/Chrislysen/deploy-doctor/issues"
+
+[tool.setuptools.packages.find]
+include = ["deploy_doctor*"]
