@@ -34,3 +34,10 @@ Issues = "https://github.com/Chrislysen/deploy-doctor/issues"
 
 [tool.setuptools.packages.find]
 include = ["deploy_doctor*"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    # torch.ao.quantization is deprecated upstream but remains the standard
+    # path for the eager-mode quantized models this tool targets.
+    "ignore::DeprecationWarning",
+]

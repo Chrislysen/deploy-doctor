@@ -98,7 +98,41 @@ def detect_fallbacks(
             )
         )
 
-    # 4. fp16 weights but CPU is the target — CPU fp16 is a perf cliff.
+    # 4. Unmaterialized 'meta' weights — the model was never actually loaded.
+    meta_modules = [m.name for m in report.modules if "meta" in m.devices]
+    if meta_modules:
+        findings.append(
+            Finding(
+                severity="fail",
+                code="meta_unmaterialized",
+                message=f"{len(meta_modules)} module(s) still on the 'meta' device — weights are not loaded.",
+                detail=(
+                    "Meta tensors carry shape/dtype but no data (a common state "
+                    "after `init_empty_weights()` or a deferred load). Running this "
+                    "as-is produces garbage or errors; load real weights with "
+                    "load_state_dict(..., assign=True) or to_empty() first."
+                ),
+                modules=meta_modules,
+            )
+        )
+
+    # 5. Model left in train() mode at inference — silent correctness footgun.
+    if model.training:
+        findings.append(
+            Finding(
+                severity="warn",
+                code="train_mode_at_inference",
+                message="Model is in train() mode — Dropout and BatchNorm will misbehave at inference.",
+                detail=(
+                    "In train() mode Dropout randomly zeros activations and "
+                    "BatchNorm uses batch statistics instead of running stats, so "
+                    "outputs become non-deterministic and batch-size dependent. "
+                    "Call model.eval() before serving."
+                ),
+            )
+        )
+
+    # 6. fp16 weights but CPU is the target — CPU fp16 is a perf cliff.
     has_fp16 = any("float16" in m.dtypes or "half" in m.dtypes for m in report.modules)
     if has_fp16 and target == "cpu":
         findings.append(

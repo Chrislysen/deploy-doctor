@@ -45,8 +45,66 @@ def example_input(in_dim: int = 512, batch: int = 1) -> torch.Tensor:
     return torch.randn(batch, in_dim)
 
 
-def build_demo():
-    """Return ``(fp32_model, int8_model, example_input)`` for the demo."""
-    fp32 = build_fp32()
-    int8 = quantize_int8_dynamic(build_fp32())
-    return fp32, int8, example_input()
+class _EncoderBlock(nn.Module):
+    """One pre-norm transformer block: self-attention + feed-forward.
+
+    Written out by hand (rather than nn.TransformerEncoderLayer) so the forward
+    pass doesn't hit PyTorch's fused fast-path, which itself breaks on
+    dynamically-quantized Linears — a separate footgun we don't want clouding
+    the demo. Dynamic int8 quant reaches the two FFN Linears; MultiheadAttention
+    keeps its packed in-projection (and its NonDynamicallyQuantizable out-proj)
+    in fp32, so this shows realistic *partial* quantization.
+    """
+
+    def __init__(self, d_model: int, nhead: int):
+        super().__init__()
+        self.attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model),
+        )
+
+    def forward(self, x):
+        a, _ = self.attn(x, x, x, need_weights=False)
+        x = self.norm1(x + a)
+        x = self.norm2(x + self.ff(x))
+        return x
+
+
+class TinyTransformer(nn.Module):
+    """A small but real Transformer encoder — attention + feed-forward."""
+
+    def __init__(self, d_model: int = 256, nhead: int = 4, layers: int = 2):
+        super().__init__()
+        self.blocks = nn.ModuleList(
+            [_EncoderBlock(d_model, nhead) for _ in range(layers)]
+        )
+        self.head = nn.Linear(d_model, d_model)
+
+    def forward(self, x):
+        for block in self.blocks:
+            x = block(x)
+        return self.head(x)
+
+
+def build_transformer(d_model: int = 256) -> nn.Module:
+    model = TinyTransformer(d_model=d_model)
+    model.eval()
+    return model
+
+
+def transformer_input(d_model: int = 256, seq: int = 16, batch: int = 1) -> torch.Tensor:
+    return torch.randn(batch, seq, d_model)
+
+
+def build_demo(arch: str = "mlp"):
+    """Return ``(fp32_model, int8_model, example_input)`` for the demo.
+
+    ``arch`` is ``"mlp"`` (default) or ``"transformer"``.
+    """
+    if arch == "transformer":
+        return build_transformer(), quantize_int8_dynamic(build_transformer()), transformer_input()
+    return build_fp32(), quantize_int8_dynamic(build_fp32()), example_input()

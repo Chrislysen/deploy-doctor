@@ -1,5 +1,10 @@
 # deploy-doctor
 
+[![CI](https://github.com/Chrislysen/deploy-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/Chrislysen/deploy-doctor/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.9%E2%80%933.14-blue)
+![PyTorch](https://img.shields.io/badge/pytorch-1.13%2B-ee4c2c)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 **Does your "GPU" model actually run on the GPU?** A lot of the time, it doesn't —
 and nothing tells you. `deploy-doctor` catches silent device-placement footguns
 in PyTorch models before they cost you a 10× latency regression in production.
@@ -92,9 +97,14 @@ print(result.to_dict())        # full structured report
 | Check | Severity | What it catches |
 |---|---|---|
 | `int8_cpu_locked` | **FAIL** | int8-quantized modules targeted at CUDA — they can only run on CPU |
+| `meta_unmaterialized` | **FAIL** | weights still on the `meta` device — the model was never actually loaded |
 | `mixed_devices` | **WARN** | weights split across CPU/GPU — a `.to()` that missed a submodule or buffer |
+| `train_mode_at_inference` | **WARN** | model left in `train()` mode — Dropout/BatchNorm silently corrupt inference |
 | `fp16_on_cpu` | **WARN** | fp16 weights on a CPU target — upcasts/perf cliff, no speedup |
 | live confirmation | — | on a machine *with* CUDA, actually moves the model and proves where it lands |
+
+Try it on a realistic architecture too — `deploy-doctor demo --arch transformer`
+shows *partial* quantization (FFN Linears int8-locked, attention/LayerNorm fp32).
 
 When CUDA **is** present, `deploy-doctor` also runs a live check: it moves the
 model to the GPU and re-inspects, confirming empirically what the static analysis

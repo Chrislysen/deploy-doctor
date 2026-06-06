@@ -57,19 +57,42 @@ def _emit(result, target, as_json: bool):
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
-    fp32, int8, x = build_demo()
+    fp32, int8, x = build_demo(args.arch)
     target = args.target
 
     if not args.json:
-        print("\n=== fp32 baseline (target: %s) ===" % target)
+        print(f"\n=== fp32 baseline ({args.arch}, target: {target}) ===")
     res_fp32 = diagnose(fp32, x, target_device=target, do_bench=True)
     _emit(res_fp32, target, args.json)
 
     if not args.json:
-        print("\n=== int8 dynamic-quantized — the footgun (target: %s) ===" % target)
+        print(f"\n=== int8 dynamic-quantized — the footgun ({args.arch}, target: {target}) ===")
     res_int8 = diagnose(int8, x, target_device=target, do_bench=True)
     _emit(res_int8, target, args.json)
+
+    if not args.json:
+        _print_contrast(res_fp32, res_int8, target)
     return 1 if res_int8.verdict == "FAIL" else 0
+
+
+def _print_contrast(res_fp32, res_int8, target: str) -> None:
+    b0, b1 = res_fp32.bench, res_int8.bench
+    if not (b0 and b1 and "mean_ms" in b0 and "mean_ms" in b1):
+        return
+    here = b1["device_output"]
+    print("\n=== the point ===")
+    delta = (b1["mean_ms"] - b0["mean_ms"]) / b0["mean_ms"] * 100.0
+    faster = "faster" if delta < 0 else "slower"
+    print(
+        f"  on this {here.upper()}: fp32 {b0['mean_ms']} ms  vs  int8 {b1['mean_ms']} ms"
+        f"  → int8 is {abs(delta):.0f}% {faster} here."
+    )
+    if target == "cuda":
+        print(
+            "  you asked to deploy on CUDA — but the int8 model is CPU-locked, so it "
+            "cannot use the GPU at all.\n  the 'speedup' you quantized for does not exist "
+            "on your target. deploy-doctor caught it before production did."
+        )
 
 
 def cmd_check(args: argparse.Namespace) -> int:
@@ -91,6 +114,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("demo", help="reproduce the int8 silent-CPU-fallback footgun")
     d.add_argument("--target", default="cuda", help="device you intend to deploy on")
+    d.add_argument(
+        "--arch",
+        default="mlp",
+        choices=["mlp", "transformer"],
+        help="demo architecture (mlp or transformer)",
+    )
     d.add_argument("--json", action="store_true", help="machine-readable output")
     d.set_defaults(func=cmd_demo)
 
