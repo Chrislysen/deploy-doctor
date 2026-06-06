@@ -11,7 +11,7 @@ and nothing tells you. `deploy-doctor` catches silent device-placement footguns
 in PyTorch models before they cost you a 10× latency regression in production.
 
 ```bash
-pip install deploy-doctor      # (coming soon) — or: pip install -e .
+pip install git+https://github.com/Chrislysen/deploy-doctor
 deploy-doctor demo
 ```
 
