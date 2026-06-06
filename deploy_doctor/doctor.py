@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import dataclasses
 
-import torch
 from torch import nn
 
 from .bench import benchmark
@@ -113,13 +112,14 @@ def render(result: DiagnoseResult, target_device: str = "cuda", color: bool = Tr
         lines.append("")
         col = {"fail": "31", "ok": "32"}.get(result.live.severity, "0")
         lines.append("  live check (CUDA present on this machine)")
-        lines.append("  " + c(col, f"[{_ICON.get(result.live.severity, '?')}] {result.live.message}"))
+        icon = _ICON.get(result.live.severity, "?")
+        lines.append("  " + c(col, f"[{icon}] {result.live.message}"))
         if result.live.detail:
             lines.append("      " + c("2", result.live.detail))
     else:
         lines.append("")
-        lines.append("  " + c("2", "live check : skipped (no CUDA device on this machine — "))
-        lines.append("  " + c("2", "             the finding above is static and holds regardless)"))
+        lines.append("  " + c("2", "live check : skipped (no CUDA device on this machine —"))
+        lines.append("  " + c("2", "             the finding above is static and holds)"))
 
     # Bench
     if result.bench and "error" not in result.bench:

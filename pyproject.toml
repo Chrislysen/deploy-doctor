@@ -41,3 +41,10 @@ filterwarnings = [
     # path for the eager-mode quantized models this tool targets.
     "ignore::DeprecationWarning",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

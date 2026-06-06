@@ -9,10 +9,10 @@ times you call ``.to("cuda")`` — often a large, invisible latency regression.
 and flags these silent fallbacks with a clear verdict.
 """
 
-from .inspect import ModelReport, ModuleInfo, inspect_model
-from .fallback import Finding, detect_fallbacks
 from .bench import benchmark
 from .doctor import DiagnoseResult, diagnose, render
+from .fallback import Finding, detect_fallbacks
+from .inspect import ModelReport, ModuleInfo, inspect_model
 
 __version__ = "0.1.0"
 

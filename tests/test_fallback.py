@@ -1,5 +1,3 @@
-import torch
-from torch import nn
 
 from deploy_doctor.demo_models import build_fp32, example_input, quantize_int8_dynamic
 from deploy_doctor.doctor import diagnose
@@ -51,7 +49,8 @@ def test_diagnose_verdicts():
     x = example_input()
     assert diagnose(build_fp32(), x, target_device="cuda").verdict == "PASS"
     assert diagnose(quantize_int8_dynamic(build_fp32()), x, target_device="cuda").verdict == "FAIL"
-    assert diagnose(quantize_int8_dynamic(build_fp32()), x, target_device="cpu").verdict in ("PASS", "WARN")
+    cpu_verdict = diagnose(quantize_int8_dynamic(build_fp32()), x, target_device="cpu").verdict
+    assert cpu_verdict in ("PASS", "WARN")
 
 
 def test_benchmark_runs_on_cpu():

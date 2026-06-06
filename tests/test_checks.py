@@ -1,7 +1,6 @@
-import torch
 from torch import nn
 
-from deploy_doctor.demo_models import build_demo, build_fp32, quantize_int8_dynamic
+from deploy_doctor.demo_models import build_demo, build_fp32
 from deploy_doctor.doctor import diagnose
 from deploy_doctor.fallback import detect_fallbacks
 from deploy_doctor.inspect import inspect_model
@@ -47,3 +46,13 @@ def test_transformer_int8_actually_runs():
     res = diagnose(int8, x, target_device="cpu", do_bench=True)
     assert res.bench is not None and "error" not in res.bench
     assert res.bench["mean_ms"] > 0
+
+
+def test_fail_on_exit_code_mapping():
+    from deploy_doctor.cli import _exit_code
+
+    assert _exit_code("PASS", "fail") == 0
+    assert _exit_code("WARN", "fail") == 0  # warnings don't fail by default
+    assert _exit_code("WARN", "warn") == 1  # ...but can be opted into
+    assert _exit_code("FAIL", "fail") == 1
+    assert _exit_code("FAIL", "never") == 0  # never fail the build

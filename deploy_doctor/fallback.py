@@ -14,7 +14,7 @@ import dataclasses
 import torch
 from torch import nn
 
-from .inspect import ModelReport, inspect_model, is_quantized_module
+from .inspect import ModelReport, inspect_model
 
 SEVERITY_ORDER = {"fail": 3, "warn": 2, "info": 1, "ok": 0}
 
@@ -105,7 +105,10 @@ def detect_fallbacks(
             Finding(
                 severity="fail",
                 code="meta_unmaterialized",
-                message=f"{len(meta_modules)} module(s) still on the 'meta' device — weights are not loaded.",
+                message=(
+                    f"{len(meta_modules)} module(s) still on the 'meta' device "
+                    f"— weights are not loaded."
+                ),
                 detail=(
                     "Meta tensors carry shape/dtype but no data (a common state "
                     "after `init_empty_weights()` or a deferred load). Running this "
@@ -122,7 +125,10 @@ def detect_fallbacks(
             Finding(
                 severity="warn",
                 code="train_mode_at_inference",
-                message="Model is in train() mode — Dropout and BatchNorm will misbehave at inference.",
+                message=(
+                    "Model is in train() mode — Dropout and BatchNorm "
+                    "will misbehave at inference."
+                ),
                 detail=(
                     "In train() mode Dropout randomly zeros activations and "
                     "BatchNorm uses batch statistics instead of running stats, so "
@@ -144,6 +150,41 @@ def detect_fallbacks(
                     "Most CPU kernels have poor or no native fp16 support, so ops "
                     "upcast to fp32 (extra copies, no speedup) or fall back to slow "
                     "paths. fp16 pays off on GPU, not CPU."
+                ),
+            )
+        )
+
+    # 7. accelerate CPU/disk offloading — weights move device every forward pass.
+    offloaded = [
+        name for name, m in model.named_modules() if hasattr(m, "_hf_hook")
+    ]
+    if offloaded:
+        findings.append(
+            Finding(
+                severity="warn",
+                code="offloaded_weights",
+                message=f"{len(offloaded)} module(s) use accelerate offload hooks.",
+                detail=(
+                    "Weights are streamed from CPU/disk to the GPU on each forward "
+                    "pass (device_map='auto' / disk offload). It runs, but the "
+                    "per-step host<->device copies can dominate latency. Confirm "
+                    "this is intended for your latency budget."
+                ),
+                modules=offloaded[:8],
+            )
+        )
+
+    # 8. float64 weights — a silent ~32x throughput cliff on GPU.
+    if any("float64" in m.dtypes or "double" in m.dtypes for m in report.modules):
+        findings.append(
+            Finding(
+                severity="warn",
+                code="float64_weights",
+                message="float64 (double) weights detected.",
+                detail=(
+                    "Consumer/most datacenter GPUs run fp64 at a small fraction of "
+                    "fp32 throughput (often ~1/32). This is usually an accidental "
+                    ".double() or a numpy float64 that crept in. Cast to float32."
                 ),
             )
         )

@@ -1,4 +1,3 @@
-import torch
 from torch import nn
 
 from deploy_doctor.demo_models import build_fp32, quantize_int8_dynamic

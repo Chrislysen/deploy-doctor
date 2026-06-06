@@ -3,6 +3,7 @@
 [![CI](https://github.com/Chrislysen/deploy-doctor/actions/workflows/ci.yml/badge.svg)](https://github.com/Chrislysen/deploy-doctor/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.9%E2%80%933.14-blue)
 ![PyTorch](https://img.shields.io/badge/pytorch-1.13%2B-ee4c2c)
+[![Ruff](https://img.shields.io/badge/lint-ruff-261230)](https://github.com/astral-sh/ruff)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 **Does your "GPU" model actually run on the GPU?** A lot of the time, it doesn't —
@@ -74,12 +75,29 @@ deploy-doctor check mypkg.models:make_model --target cuda --input-shape 1,3,224,
 - `--target` — the device you *intend* to deploy on (default `cuda`).
 - `--input-shape` — optional; enables a quick latency benchmark on the device
   the model actually runs on.
+- `--fail-on {fail,warn,never}` — severity that makes the exit code non-zero
+  (default `fail`). Use `--fail-on warn` to gate a pipeline on warnings too.
 - `--json` — machine-readable output for CI.
+
+It also works on real models. Point it at a small factory that loads (and, if
+you like, quantizes) yours — e.g. a HuggingFace model:
+
+```python
+# myloaders.py
+import torch
+from transformers import AutoModel
+def quantized_bert():
+    m = AutoModel.from_pretrained("bert-base-uncased").eval()
+    return torch.ao.quantization.quantize_dynamic(m, {torch.nn.Linear}, dtype=torch.qint8)
+```
+```bash
+deploy-doctor check myloaders:quantized_bert --target cuda   # -> FAIL: CPU-locked
+```
 
 Exit code is non-zero on a `FAIL`, so you can wire it into a pipeline:
 
 ```yaml
-- run: deploy-doctor check mypkg.models:make_model --target cuda --json
+- run: deploy-doctor check mypkg.models:make_model --target cuda --fail-on warn
 ```
 
 Or use it as a library:
@@ -101,6 +119,8 @@ print(result.to_dict())        # full structured report
 | `mixed_devices` | **WARN** | weights split across CPU/GPU — a `.to()` that missed a submodule or buffer |
 | `train_mode_at_inference` | **WARN** | model left in `train()` mode — Dropout/BatchNorm silently corrupt inference |
 | `fp16_on_cpu` | **WARN** | fp16 weights on a CPU target — upcasts/perf cliff, no speedup |
+| `offloaded_weights` | **WARN** | accelerate CPU/disk offload — weights stream device↔device every forward pass |
+| `float64_weights` | **WARN** | fp64 weights — silent ~32× throughput cliff on GPU |
 | live confirmation | — | on a machine *with* CUDA, actually moves the model and proves where it lands |
 
 Try it on a realistic architecture too — `deploy-doctor demo --arch transformer`
@@ -142,7 +162,10 @@ multi-GPU study. The research repo:
 ```bash
 pip install -e ".[dev]"
 pytest -q
+ruff check .
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for what's new.
 
 ## License
 

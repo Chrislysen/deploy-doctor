@@ -15,7 +15,7 @@ import sys
 import torch
 
 from . import __version__
-from .demo_models import build_demo, example_input
+from .demo_models import build_demo
 from .doctor import diagnose, render
 
 
@@ -29,7 +29,7 @@ def _load_model(spec: str):
     try:
         module = importlib.import_module(mod_name)
     except Exception as exc:
-        raise SystemExit(f"error: could not import '{mod_name}': {exc}")
+        raise SystemExit(f"error: could not import '{mod_name}': {exc}") from exc
     obj = getattr(module, attr, None)
     if obj is None:
         raise SystemExit(f"error: '{attr}' not found in '{mod_name}'")
@@ -45,7 +45,7 @@ def _parse_shape(shape: str | None):
     try:
         dims = [int(s) for s in shape.replace("x", ",").split(",") if s.strip()]
     except ValueError:
-        raise SystemExit(f"error: bad --input-shape '{shape}' (use e.g. 1,512)")
+        raise SystemExit(f"error: bad --input-shape '{shape}' (use e.g. 1,512)") from None
     return torch.randn(*dims)
 
 
@@ -95,12 +95,18 @@ def _print_contrast(res_fp32, res_int8, target: str) -> None:
         )
 
 
+def _exit_code(verdict: str, fail_on: str) -> int:
+    rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
+    threshold = {"never": 99, "fail": 2, "warn": 1}[fail_on]
+    return 1 if rank[verdict] >= threshold else 0
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     model = _load_model(args.model)
     x = _parse_shape(args.input_shape)
     result = diagnose(model, x, target_device=args.target, do_bench=x is not None)
     _emit(result, args.target, args.json)
-    return {"FAIL": 1, "WARN": 0, "PASS": 0}[result.verdict]
+    return _exit_code(result.verdict, args.fail_on)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,6 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-shape",
         default=None,
         help="example input shape for latency benchmark, e.g. '1,512'",
+    )
+    c.add_argument(
+        "--fail-on",
+        default="fail",
+        choices=["fail", "warn", "never"],
+        help="exit non-zero at this severity or worse (default: fail)",
     )
     c.add_argument("--json", action="store_true", help="machine-readable output")
     c.set_defaults(func=cmd_check)
