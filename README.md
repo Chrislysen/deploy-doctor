@@ -29,15 +29,23 @@ out = qmodel(x.to("cuda")) # no error ✅
 ```
 
 No exception is raised. Looks like it's on the GPU. **It isn't.** PyTorch's
-eager-mode int8 kernels (FBGEMM/QNNPACK) have **no CUDA backend**, so the compute
-silently stays on the CPU — often *slower* than the fp32 model you started with,
-on hardware you're paying for. This is the kind of thing that shows up as a
-mysterious latency regression weeks later, not as a build failure.
+eager-mode int8 kernels (FBGEMM/QNNPACK) have **no CUDA backend**. The `.to("cuda")`
+silently does nothing — the packed weights stay on the CPU — and then at inference
+you hit one of two things: a hard `NotImplementedError: quantized::linear_dynamic`
+on the CUDA backend (if your input is on the GPU), or the compute quietly running
+on the CPU so the speedup you quantized for never materialises. Either way you find
+out in staging or production, not at build time. **`deploy-doctor` finds it in CI,
+on a CPU runner, before you deploy.**
 
-`deploy-doctor` makes it loud:
+> Note: this is specifically **eager-mode** quantization (`quantize_dynamic` /
+> static convert). int8/4-bit done with **bitsandbytes, torchao, or GPTQ/AWQ**
+> *does* run on the GPU — deploy-doctor recognises those and reports them as fine,
+> not as a footgun.
+
+`deploy-doctor` makes the eager-mode case loud:
 
 ```
-=== int8 dynamic-quantized — the footgun (target: cuda) ===
+=== int8 dynamic-quantized — the footgun (mlp, target: cuda) ===
 deploy-doctor  ·  device-placement diagnosis
 ────────────────────────────────────────────────────────────
   quantization : dynamic-int8
@@ -47,11 +55,14 @@ deploy-doctor  ·  device-placement diagnosis
   target device: cuda
 
   findings
-  [✗] 3 int8-quantized module(s) cannot run on CUDA — they are locked to the CPU.
-      PyTorch eager-mode int8 quantization uses FBGEMM/QNNPACK, which have
-      no CUDA backend. Calling .to('cuda') will NOT move this compute to the
-      GPU; it silently stays on the CPU. For GPU int8, export to TensorRT or
-      use a CUDA-aware path instead.
+  [✗] 3 eager-mode int8 module(s) cannot run on CUDA — they are locked to the CPU.
+      PyTorch eager-mode int8 (FBGEMM/QNNPACK) has no CUDA backend, and the
+      failure is silent: .to('cuda') raises no error but does not move the
+      packed weights. At inference you then hit one of two outcomes — (a) a
+      hard 'NotImplementedError: quantized::linear_dynamic on the CUDA
+      backend' if the input is on the GPU, or (b) compute silently staying
+      on the CPU, so the speedup you quantized for never happens. For
+      int8/4-bit that actually runs on the GPU, use bitsandbytes, torchao, …
       · net.0
       · net.2
       · net.4
@@ -121,7 +132,12 @@ print(result.to_dict())        # full structured report
 | `fp16_on_cpu` | **WARN** | fp16 weights on a CPU target — upcasts/perf cliff, no speedup |
 | `offloaded_weights` | **WARN** | accelerate CPU/disk offload — weights stream device↔device every forward pass |
 | `float64_weights` | **WARN** | fp64 weights — silent ~32× throughput cliff on GPU |
+| `gpu_quant_ok` | **OK** | bitsandbytes / torchao / GPTQ detected — GPU-capable, explicitly *not* a footgun |
 | live confirmation | — | on a machine *with* CUDA, actually moves the model and proves where it lands |
+
+It distinguishes **eager-mode int8** (FBGEMM/QNNPACK, CPU-locked → flagged) from
+**GPU-capable quantization** (bitsandbytes/torchao/GPTQ → reported fine), so it
+won't cry wolf on a quantized LLM that genuinely runs on the GPU.
 
 Try it on a realistic architecture too — `deploy-doctor demo --arch transformer`
 shows *partial* quantization (FFN Linears int8-locked, attention/LayerNorm fp32).

@@ -18,19 +18,52 @@ from torch import nn
 QUANT_DTYPES = {torch.qint8, torch.quint8, torch.qint32}
 
 
-def is_quantized_module(module: nn.Module) -> bool:
-    """True if ``module`` is an eager-mode quantized module (CPU/ARM only).
+def is_eager_quantized(module: nn.Module) -> bool:
+    """True if ``module`` is a PyTorch *eager-mode* quantized module.
 
-    Detected two ways, either is sufficient:
-    * its class lives under a ``...quantized...`` namespace, or
-    * it carries ``_packed_params`` (the packed int8 weight blob).
+    These use the FBGEMM/QNNPACK backends and are **CPU/ARM-only** — the footgun
+    this tool is built around. Detected by the packed-params blob or torch's own
+    quantized namespace (covers ``torch.ao.nn.quantized`` and
+    ``torch.ao.nn.intrinsic.quantized``). Crucially scoped to ``torch.*`` so it
+    never catches a GPU-capable third-party library.
     """
-    cls = type(module)
-    namespace = getattr(cls, "__module__", "") or ""
-    if "quantized" in namespace:
-        return True
     if hasattr(module, "_packed_params"):
         return True
+    namespace = getattr(type(module), "__module__", "") or ""
+    return namespace.startswith("torch.") and "quantized" in namespace
+
+
+# Backwards-compatible alias used across the codebase and tests.
+is_quantized_module = is_eager_quantized
+
+_GPU_QUANT_MARKERS = ("bitsandbytes", "torchao", "auto_gptq", "gptq", "awq", "exllama")
+
+
+def is_gpu_quantized(module: nn.Module) -> bool:
+    """True if ``module`` is **GPU-capable** quantization — bitsandbytes
+    (``Linear4bit``/``Linear8bitLt``), torchao, GPTQ, AWQ, etc.
+
+    These run int8/4-bit *on the GPU* and must **never** be reported as
+    CPU-locked. This is the check that keeps the tool from embarrassing itself in
+    front of anyone who actually ships quantized LLMs.
+    """
+    if is_eager_quantized(module):
+        return False
+    namespace = (getattr(type(module), "__module__", "") or "").lower()
+    if any(marker in namespace for marker in _GPU_QUANT_MARKERS):
+        return True
+    name = type(module).__name__.lower()
+    if any(k in name for k in ("4bit", "8bit", "nf4", "int4")):
+        return True
+    if hasattr(module, "quant_state") or hasattr(module, "weight_bit_width"):
+        return True
+    # torchao stores an AffineQuantized tensor subclass as a plain Linear weight.
+    w = getattr(module, "weight", None)
+    if w is not None and not callable(w):
+        wmod = (getattr(type(w), "__module__", "") or "").lower()
+        wname = type(w).__name__.lower()
+        if "torchao" in wmod or "affinequant" in wname or "quantized" in wname:
+            return True
     return False
 
 
@@ -82,8 +115,9 @@ class ModuleInfo:
     type: str
     devices: list[str]
     dtypes: list[str]
-    quantized: bool
+    quantized: bool  # eager-mode, CPU-locked
     param_count: int
+    gpu_quantized: bool = False  # bitsandbytes / torchao / GPTQ — GPU-capable
 
 
 @dataclasses.dataclass
@@ -109,6 +143,7 @@ class ModelReport:
 def _classify_scheme(modules: list[ModuleInfo], dtype_counts: Counter) -> str:
     any_dynamic = any(m.quantized and "dynamic" in m.type.lower() for m in modules)
     any_quant = any(m.quantized for m in modules)
+    any_gpu_quant = any(m.gpu_quantized for m in modules)
     quant_dtype = any(
         d in {"qint8", "quint8", "qint32"} for m in modules for d in m.dtypes
     )
@@ -116,6 +151,8 @@ def _classify_scheme(modules: list[ModuleInfo], dtype_counts: Counter) -> str:
         return "dynamic-int8"
     if any_quant or quant_dtype:
         return "static-int8"
+    if any_gpu_quant:
+        return "gpu-quant"
     float_dtypes = {d for d in dtype_counts if d.startswith("float") or d == "half"}
     if float_dtypes == {"float16"} or float_dtypes == {"half"}:
         return "fp16"
@@ -148,7 +185,8 @@ def inspect_model(model: nn.Module) -> ModelReport:
         if not devices and not dtypes and n == 0 and not is_quantized_module(module):
             continue  # paramless op (ReLU, Dropout, ...) — nothing to place
 
-        quant = is_quantized_module(module)
+        quant = is_eager_quantized(module)
+        gpu_quant = is_gpu_quantized(module)
         type_name = type(module).__module__ + "." + type(module).__name__
         if _is_dynamic_quantized(module):
             type_name += "  (dynamic)"
@@ -160,6 +198,7 @@ def inspect_model(model: nn.Module) -> ModelReport:
                 dtypes=dtypes,
                 quantized=quant,
                 param_count=n,
+                gpu_quantized=gpu_quant,
             )
         )
         all_devices.update(devices)

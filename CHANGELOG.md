@@ -6,6 +6,15 @@ semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+- **Precise quant detection.** Distinguish PyTorch *eager-mode* int8
+  (FBGEMM/QNNPACK, CPU-locked) from *GPU-capable* quantization (bitsandbytes,
+  torchao, GPTQ/AWQ). GPU-capable quant is now reported as fine (`gpu_quant_ok`)
+  and never false-flagged as CPU-locked.
+- **Honest messaging.** The `int8_cpu_locked` finding now spells out the two real
+  failure modes (hard `NotImplementedError` on CUDA input vs. silent CPU
+  execution) instead of implying a single "silent slowdown".
+
 ### Added
 - `deploy-doctor demo --arch transformer` — reproduces the footgun on a real
   attention encoder, showing *partial* int8 quantization (FFN Linears locked,

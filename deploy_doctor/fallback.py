@@ -45,28 +45,49 @@ def detect_fallbacks(
     findings: list[Finding] = []
 
     quant_modules = [m.name for m in report.modules if m.quantized]
+    gpu_quant_modules = [m.name for m in report.modules if m.gpu_quantized]
 
-    # 1. The headline footgun: int8 quantized model targeted at a CUDA device.
+    # 0. GPU-capable quantization (bitsandbytes / torchao / GPTQ) — NOT a footgun.
+    #    Stated explicitly so the tool is never mistaken for flagging these.
+    if gpu_quant_modules:
+        findings.append(
+            Finding(
+                severity="ok",
+                code="gpu_quant_ok",
+                message=(
+                    f"{len(gpu_quant_modules)} GPU-capable quantized module(s) "
+                    f"(bitsandbytes / torchao / GPTQ) — these run on the GPU."
+                ),
+                detail="Not CPU-locked. int8/4-bit here is a real GPU speedup, not a footgun.",
+                modules=gpu_quant_modules,
+            )
+        )
+
+    # 1. The headline footgun: eager-mode int8 quantized model targeted at CUDA.
     if quant_modules and target == "cuda":
         findings.append(
             Finding(
                 severity="fail",
                 code="int8_cpu_locked",
                 message=(
-                    f"{len(quant_modules)} int8-quantized module(s) cannot run on "
+                    f"{len(quant_modules)} eager-mode int8 module(s) cannot run on "
                     f"CUDA — they are locked to the CPU."
                 ),
                 detail=(
-                    "PyTorch eager-mode int8 quantization uses FBGEMM/QNNPACK, "
-                    "which have no CUDA backend. Calling .to('cuda') will NOT move "
-                    "this compute to the GPU; it silently stays on the CPU. For GPU "
-                    "int8, export to TensorRT or use a CUDA-aware path instead."
+                    "PyTorch eager-mode int8 (FBGEMM/QNNPACK) has no CUDA backend, "
+                    "and the failure is silent: .to('cuda') raises no error but does "
+                    "not move the packed weights. At inference you then hit one of "
+                    "two outcomes — (a) a hard 'NotImplementedError: quantized::"
+                    "linear_dynamic on the CUDA backend' if the input is on the GPU, "
+                    "or (b) compute silently staying on the CPU, so the speedup you "
+                    "quantized for never happens. For int8/4-bit that actually runs "
+                    "on the GPU, use bitsandbytes, torchao, or a TensorRT/ONNX export."
                 ),
                 modules=quant_modules,
             )
         )
 
-    # 2. Quantized model with no GPU intent — fine, but say so explicitly.
+    # 2. Eager int8 with no GPU intent — fine, but say so explicitly.
     if quant_modules and target == "cpu":
         findings.append(
             Finding(
